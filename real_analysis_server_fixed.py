@@ -127,6 +127,8 @@ class ImageAnalysisHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_download(api_path)
         elif api_path.startswith('/preview/'):
             self.handle_preview(api_path)
+        elif api_path.startswith('/analyze/'):
+            self.handle_analyze(api_path)
         else:
             self.send_json_error(404, "API endpoint not found")
 

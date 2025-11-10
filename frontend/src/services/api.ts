@@ -13,8 +13,28 @@ class ApiService {
   private client: AxiosInstance;
 
   constructor() {
+    // 自动检测API基础URL
+    const getApiBaseURL = () => {
+      // 从环境变量获取
+      if (import.meta.env.VITE_API_BASE_URL) {
+        return import.meta.env.VITE_API_BASE_URL;
+      }
+
+      // 如果是本地开发环境
+      if (import.meta.env.DEV) {
+        return 'http://localhost:8080/api';
+      }
+
+      // 如果是生产环境，使用相对路径
+      const currentOrigin = window.location.origin;
+      return `${currentOrigin}/api`;
+    };
+
+    const baseURL = getApiBaseURL();
+    console.log('API Base URL:', baseURL);
+
     this.client = axios.create({
-      baseURL: 'http://localhost:8080/api',
+      baseURL,
       timeout: 30000,
       headers: {
         'Content-Type': 'application/json',
@@ -93,7 +113,7 @@ class ApiService {
 
   // 分析图片参数
   async analyzeImage(imageId: string): Promise<AnalysisResponse> {
-    const response = await this.client.post<ApiResponse<AnalysisResponse>>(
+    const response = await this.client.get<ApiResponse<AnalysisResponse>>(
       `/analyze/${imageId}`
     );
     return response.data.data!;
