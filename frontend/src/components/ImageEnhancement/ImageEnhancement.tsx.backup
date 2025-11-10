@@ -1,0 +1,299 @@
+import React, { useState, useEffect } from 'react';
+import { Sparkles, RotateCcw, Download, RefreshCw } from 'lucide-react';
+import { Button, Loading } from '../UI';
+import { ImageUpload } from '../shared';
+import FilterSelector from './FilterSelector';
+import ImageComparison from './ImageComparison';
+import { storageService, apiService } from '../../services';
+import toast from 'react-hot-toast';
+import type { ParameterHistory, UploadedImage } from '../../types';
+
+interface ImageEnhancementProps {
+  className?: string;
+}
+
+const ImageEnhancement: React.FC<ImageEnhancementProps> = ({ className = '' }) => {
+  const [originalImage, setOriginalImage] = useState<UploadedImage | null>(null);
+  const [originalImageUrl, setOriginalImageUrl] = useState<string | null>(null);
+  const [selectedFilter, setSelectedFilter] = useState<ParameterHistory | null>(null);
+  const [enhancedImageUrl, setEnhancedImageUrl] = useState<string | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [savedFilters, setSavedFilters] = useState<ParameterHistory[]>([]);
+  const [processingStatus, setProcessingStatus] = useState<'idle' | 'uploading' | 'processing' | 'completed'>('idle');
+
+  // 组件卸载时清理URL
+  useEffect(() => {
+    return () => {
+      if (originalImageUrl) {
+        URL.revokeObjectURL(originalImageUrl);
+      }
+    };
+  }, [originalImageUrl]);
+
+  // 加载保存的滤镜
+  useEffect(() => {
+    const filters = storageService.getParameterHistory();
+    setSavedFilters(filters);
+  }, []);
+
+  const handleImageUpload = async (file: File) => {
+    try {
+      setProcessingStatus('uploading');
+
+      // 创建图片预览URL
+      const imageUrl = URL.createObjectURL(file);
+      setOriginalImageUrl(imageUrl);
+
+      // 上传图片
+      const uploadResult = await apiService.uploadImage(file);
+
+      const uploadedImage: UploadedImage = {
+        id: uploadResult.image_id,
+        filename: uploadResult.filename,
+        url: imageUrl, // 使用本地预览URL
+        size: uploadResult.file_size,
+        dimensions: uploadResult.dimensions,
+        upload_time: new Date().toISOString()
+      };
+
+      setOriginalImage(uploadedImage);
+      setEnhancedImageUrl(null); // 清除之前的增强结果
+      setProcessingStatus('completed');
+
+      toast.success('图片上传成功！');
+    } catch (error) {
+      console.error('Upload error:', error);
+      toast.error('图片上传失败，请重试');
+      setProcessingStatus('idle');
+      // 清理URL
+      if (originalImageUrl) {
+        URL.revokeObjectURL(originalImageUrl);
+        setOriginalImageUrl(null);
+      }
+    }
+  };
+
+  const handleApplyFilter = async (filter: ParameterHistory) => {
+    if (!originalImage) {
+      toast.error('请先上传图片');
+      return;
+    }
+
+    try {
+      setIsProcessing(true);
+      setProcessingStatus('processing');
+      setSelectedFilter(filter);
+
+      // 调用后端API应用滤镜
+      const result = await apiService.generateFilter(originalImage.id, filter.parameters);
+
+      // 模拟生成的图片URL
+      setEnhancedImageUrl(result.output_filename);
+      setProcessingStatus('completed');
+
+      toast.success(`滤镜"${filter.name}"应用成功！`);
+    } catch (error) {
+      console.error('Apply filter error:', error);
+      toast.error('滤镜应用失败，请重试');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleResetToOriginal = () => {
+    setEnhancedImageUrl(null);
+    setSelectedFilter(null);
+    setProcessingStatus(originalImage ? 'completed' : 'idle');
+    toast.success('已恢复到原图');
+  };
+
+  const handleDownloadImage = () => {
+    if (!enhancedImageUrl) {
+      toast.error('没有可下载的图片');
+      return;
+    }
+
+    // 模拟下载
+    const link = document.createElement('a');
+    link.href = `http://localhost:8080/api/download/${enhancedImageUrl}`;
+    link.download = `enhanced_${originalImage?.filename || 'image.jpg'}`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    toast.success('图片下载已开始');
+  };
+
+  const handleRemoveImage = () => {
+    // 清理URL
+    if (originalImageUrl) {
+      URL.revokeObjectURL(originalImageUrl);
+      setOriginalImageUrl(null);
+    }
+    if (enhancedImageUrl && enhancedImageUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(enhancedImageUrl);
+    }
+
+    setOriginalImage(null);
+    setEnhancedImageUrl(null);
+    setSelectedFilter(null);
+    setProcessingStatus('idle');
+  };
+
+  return (
+    <div className={className}>
+      <div className="space-y-6">
+        {/* 模块头部 */}
+        <div className="text-center">
+          <h2 className="text-2xl font-bold text-gray-900 mb-2">图片美化</h2>
+          <p className="text-gray-600">
+            上传图片，选择保存的滤镜进行美化，支持效果对比和图片下载
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
+          {/* 左侧：图片上传和滤镜选择 */}
+          <div className="xl:col-span-1 space-y-6">
+            {/* 图片上传 */}
+            <div className="bg-white rounded-lg shadow-sm p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                上传图片
+              </h3>
+              <ImageUpload
+                onUpload={handleImageUpload}
+                isUploading={processingStatus === 'uploading'}
+                currentImage={originalImage ? {
+                  filename: originalImage.filename,
+                  size: originalImage.size,
+                  dimensions: originalImage.dimensions
+                } : null}
+                onRemoveImage={handleRemoveImage}
+                title="选择要美化的图片"
+                description="支持JPG、PNG、WEBP格式"
+              />
+            </div>
+
+            {/* 滤镜选择器 */}
+            {originalImage && (
+              <div className="bg-white rounded-lg shadow-sm p-6">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                  选择滤镜
+                </h3>
+                <FilterSelector
+                  filters={savedFilters}
+                  selectedFilter={selectedFilter}
+                  onSelectFilter={handleApplyFilter}
+                  isProcessing={isProcessing}
+                />
+              </div>
+            )}
+
+            {/* 操作按钮 */}
+            {originalImage && (
+              <div className="bg-white rounded-lg shadow-sm p-6">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                  操作
+                </h3>
+                <div className="space-y-3">
+                  <Button
+                    variant="outline"
+                    onClick={handleResetToOriginal}
+                    disabled={!enhancedImageUrl}
+                    className="w-full flex items-center justify-center space-x-2"
+                  >
+                    <RotateCcw className="w-4 h-4" />
+                    <span>���复原图</span>
+                  </Button>
+
+                  <Button
+                    variant="primary"
+                    onClick={handleDownloadImage}
+                    disabled={!enhancedImageUrl}
+                    className="w-full flex items-center justify-center space-x-2"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>下载图片</span>
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* 右侧：图片对比显示 */}
+          <div className="xl:col-span-3">
+            {originalImage ? (
+              <ImageComparison
+                originalImage={originalImage}
+                originalImageUrl={originalImageUrl}
+                enhancedImageUrl={enhancedImageUrl}
+                selectedFilter={selectedFilter}
+                isProcessing={isProcessing}
+              />
+            ) : (
+              <div className="bg-white rounded-lg shadow-sm p-12">
+                <div className="text-center">
+                  <div className="w-16 h-16 mx-auto mb-4 text-gray-400">
+                    <Sparkles className="w-full h-full" />
+                  </div>
+                  <h3 className="text-lg font-medium text-gray-900 mb-2">
+                    开始图片美化
+                  </h3>
+                  <p className="text-gray-600 mb-6">
+                    上传一张图片，然后选择保存的滤镜来美化它
+                  </p>
+
+                  {/* 快速上传按钮 */}
+                  <div className="max-w-md mx-auto">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) handleImageUpload(file);
+                      }}
+                      className="hidden"
+                      id="quick-upload"
+                    />
+                    <label
+                      htmlFor="quick-upload"
+                      className="cursor-pointer inline-flex items-center justify-center px-6 py-3 border border-transparent text-base font-medium rounded-lg text-white bg-primary-600 hover:bg-primary-700 transition-colors"
+                    >
+                      <Sparkles className="w-5 h-5 mr-2" />
+                      选择图片开始美化
+                    </label>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* 功能说明 */}
+        <div className="bg-white rounded-lg shadow-sm p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">功能说明</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            {[
+              { icon: Sparkles, title: '图片美化', desc: '选择滤镜快速美化图片' },
+              { icon: RefreshCw, title: '效果对比', desc: '实时对比原图和美化效果' },
+              { icon: RotateCcw, title: '一键还原', desc: '随时恢复到原始图片' },
+              { icon: Download, title: '下载保存', desc: '下载处理后的高质量图片' }
+            ].map((item, index) => {
+              const Icon = item.icon;
+              return (
+                <div key={index} className="text-center">
+                  <div className="w-12 h-12 mx-auto mb-3 bg-primary-100 rounded-lg flex items-center justify-center">
+                    <Icon className="w-6 h-6 text-primary-600" />
+                  </div>
+                  <h4 className="font-medium text-gray-900 mb-1">{item.title}</h4>
+                  <p className="text-sm text-gray-600">{item.desc}</p>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default ImageEnhancement;
