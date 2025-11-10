@@ -136,55 +136,96 @@ class ImageAnalysisHandler(http.server.SimpleHTTPRequestHandler):
         print(f"Headers: {dict(self.headers)}")
 
         try:
-            # 解析multipart form data
-            form = cgi.FieldStorage(
-                fp=self.rfile,
-                headers=self.headers,
-                environ={'REQUEST_METHOD': 'POST'}
-            )
+            # 获取Content-Length
+            content_length = int(self.headers.get('Content-Length', 0))
+            if content_length == 0:
+                self.send_json_error(400, "No data received")
+                return
 
-            if 'image' in form:
-                file_item = form['image']
-                if file_item.filename:
-                    # 获取临时目录
-                    temp_dir = self.get_temp_dir()
-                    file_data = file_item.file.read()
+            # 读取所有POST数据
+            post_data = self.rfile.read(content_length)
 
-                    # 确保file_data是bytes类型
-                    if isinstance(file_data, str):
-                        file_data = file_data.encode('utf-8')
+            # 获取Content-Type和boundary
+            content_type = self.headers.get('content-type', '')
+            if 'multipart/form-data' not in content_type:
+                self.send_json_error(400, "Content type must be multipart/form-data")
+                return
 
-                    # 生成基于文件内容的ID
-                    file_hash = hashlib.md5(file_data).hexdigest()
-                    image_id = f"img_{file_hash[:12]}"
+            # 提取boundary
+            boundary_parts = content_type.split('boundary=')
+            if len(boundary_parts) != 2:
+                self.send_json_error(400, "Invalid multipart boundary")
+                return
 
-                    # 保存文件 - 确保写入二进制数据
-                    temp_path = os.path.join(temp_dir, f"{image_id}.jpg")
-                    with open(temp_path, 'wb') as f:
-                        f.write(file_data)
+            boundary = boundary_parts[1].strip()
+            if boundary.startswith('"') and boundary.endswith('"'):
+                boundary = boundary[1:-1]
 
-                    print(f"Image saved to: {temp_path}")
-                    print(f"Image ID: {image_id}")
+            # 手动解析multipart数据
+            boundary_bytes = ('--' + boundary).encode('utf-8')
+            end_boundary_bytes = ('--' + boundary + '--').encode('utf-8')
 
-                    response_data = {
-                        "status": "success",
-                        "message": "上传成功",
-                        "data": {
-                            "image_id": image_id,
-                            "filename": file_item.filename,
-                            "file_size": len(file_data),
-                            "dimensions": self.get_image_dimensions(temp_path)
-                        }
+            # 分割数据
+            parts = post_data.split(boundary_bytes)
+
+            file_data = None
+            filename = None
+
+            for part in parts:
+                if not part.strip():
+                    continue
+                if part.strip() == b'--':
+                    continue
+
+                # 查找文件数据
+                if b'Content-Disposition: form-data' in part and b'filename=' in part:
+                    # 分离头部和数据
+                    if b'\r\n\r\n' in part:
+                        header_data, file_content = part.split(b'\r\n\r\n', 1)
+                    else:
+                        continue
+
+                    # 提取文件名
+                    header_str = header_data.decode('utf-8', errors='ignore')
+                    if 'filename=' in header_str:
+                        filename_start = header_str.find('filename="') + len('filename="')
+                        filename_end = header_str.find('"', filename_start)
+                        filename = header_str[filename_start:filename_end]
+
+                    # 清理文件内容（移除尾部的\r\n）
+                    file_data = file_content.rstrip(b'\r\n')
+                    break
+
+            if file_data and filename:
+                # 获取临时目录
+                temp_dir = self.get_temp_dir()
+
+                # 生成基于文件内容的ID
+                file_hash = hashlib.md5(file_data).hexdigest()
+                image_id = f"img_{file_hash[:12]}"
+
+                # 保存文件 - 确保写入二进制数据
+                temp_path = os.path.join(temp_dir, f"{image_id}.jpg")
+                with open(temp_path, 'wb') as f:
+                    f.write(file_data)
+
+                print(f"Image saved to: {temp_path}")
+                print(f"Image ID: {image_id}")
+
+                response_data = {
+                    "status": "success",
+                    "message": "上传成功",
+                    "data": {
+                        "image_id": image_id,
+                        "filename": filename,
+                        "file_size": len(file_data),
+                        "dimensions": self.get_image_dimensions(temp_path)
                     }
-                else:
-                    response_data = {
-                        "status": "error",
-                        "message": "没有选择文件"
-                    }
+                }
             else:
                 response_data = {
                     "status": "error",
-                    "message": "未找到图像文件"
+                    "message": "未找到有效的图像文件"
                 }
 
             print("Sending upload response")
