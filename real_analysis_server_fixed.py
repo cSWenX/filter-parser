@@ -138,28 +138,36 @@ class ImageAnalysisHandler(http.server.SimpleHTTPRequestHandler):
         try:
             # 获取Content-Length
             content_length = int(self.headers.get('Content-Length', 0))
+            print(f"Content-Length: {content_length}")
+
             if content_length == 0:
                 self.send_json_error(400, "No data received")
                 return
 
             # 读取所有POST数据
             post_data = self.rfile.read(content_length)
+            print(f"Received {len(post_data)} bytes of data")
 
             # 获取Content-Type和boundary
             content_type = self.headers.get('content-type', '')
-            if 'multipart/form-data' not in content_type:
-                self.send_json_error(400, "Content type must be multipart/form-data")
+            print(f"Content-Type: '{content_type}'")
+
+            if 'multipart/form-data' not in content_type.lower():
+                print(f"ERROR: Expected multipart/form-data, got: {content_type}")
+                self.send_json_error(400, f"Content type must be multipart/form-data, received: {content_type}")
                 return
 
             # 提取boundary
             boundary_parts = content_type.split('boundary=')
             if len(boundary_parts) != 2:
+                print(f"ERROR: Invalid boundary in content-type: {content_type}")
                 self.send_json_error(400, "Invalid multipart boundary")
                 return
 
             boundary = boundary_parts[1].strip()
             if boundary.startswith('"') and boundary.endswith('"'):
                 boundary = boundary[1:-1]
+            print(f"Boundary: '{boundary}'")
 
             # 手动解析multipart数据
             boundary_bytes = ('--' + boundary).encode('utf-8')
@@ -167,11 +175,13 @@ class ImageAnalysisHandler(http.server.SimpleHTTPRequestHandler):
 
             # 分割数据
             parts = post_data.split(boundary_bytes)
+            print(f"Found {len(parts)} parts in multipart data")
 
             file_data = None
             filename = None
 
-            for part in parts:
+            for i, part in enumerate(parts):
+                print(f"Part {i}: {len(part)} bytes")
                 if not part.strip():
                     continue
                 if part.strip() == b'--':
@@ -179,21 +189,26 @@ class ImageAnalysisHandler(http.server.SimpleHTTPRequestHandler):
 
                 # 查找文件数据
                 if b'Content-Disposition: form-data' in part and b'filename=' in part:
+                    print(f"Found file part: {i}")
                     # 分离头部和数据
                     if b'\r\n\r\n' in part:
                         header_data, file_content = part.split(b'\r\n\r\n', 1)
                     else:
+                        print("No header-content separator found")
                         continue
 
                     # 提取文件名
                     header_str = header_data.decode('utf-8', errors='ignore')
+                    print(f"Headers: {header_str}")
                     if 'filename=' in header_str:
                         filename_start = header_str.find('filename="') + len('filename="')
                         filename_end = header_str.find('"', filename_start)
                         filename = header_str[filename_start:filename_end]
+                        print(f"Extracted filename: {filename}")
 
                     # 清理文件内容（移除尾部的\r\n）
                     file_data = file_content.rstrip(b'\r\n')
+                    print(f"File data: {len(file_data)} bytes")
                     break
 
             if file_data and filename:
@@ -223,6 +238,7 @@ class ImageAnalysisHandler(http.server.SimpleHTTPRequestHandler):
                     }
                 }
             else:
+                print(f"File extraction failed - file_data: {file_data is not None}, filename: {filename}")
                 response_data = {
                     "status": "error",
                     "message": "未找到有效的图像文件"
